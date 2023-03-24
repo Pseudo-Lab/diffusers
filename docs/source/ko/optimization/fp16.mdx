@@ -250,3 +250,159 @@ pipe.unet.to(memory_format=torch.channels_last)  # in-place 연산
 print(pipe.unet.conv_out.state_dict()["weight"].stride())
 ```
 
+## 추적(tracing)
+
+추적은 모델을 통해 예제 입력 텐서를 통해 실행되는데, 해당 입력이 모델의 레이어를 통과할 때 호출되는 작업을 캡처하여 실행 파일 또는 'ScriptFunction'이 반환되도록 하고, 이는 just-in-time 컴파일을 사용하여 최적화됩니다.
+
+UNet 모델을 추적하기 위해 다음을 사용할 수 있습니다:
+
+```python
+import time
+import torch
+from diffusers import StableDiffusionPipeline
+import functools
+
+# torch 기울기 비활성화
+torch.set_grad_enabled(False)
+
+# 변수 설정
+n_experiments = 2
+unet_runs_per_experiment = 50
+
+# 입력 불러오기
+def generate_inputs():
+    sample = torch.randn(2, 4, 64, 64).half().cuda()
+    timestep = torch.rand(1).half().cuda() * 999
+    encoder_hidden_states = torch.randn(2, 77, 768).half().cuda()
+    return sample, timestep, encoder_hidden_states
+
+
+pipe = StableDiffusionPipeline.from_pretrained(
+    "runwayml/stable-diffusion-v1-5",
+    torch_dtype=torch.float16,
+).to("cuda")
+unet = pipe.unet
+unet.eval()
+unet.to(memory_format=torch.channels_last)  # Channels Last 메모리 형식 사용
+unet.forward = functools.partial(unet.forward, return_dict=False)  # return_dict=False을 기본값으로 설정
+
+# 워밍업
+for _ in range(3):
+    with torch.inference_mode():
+        inputs = generate_inputs()
+        orig_output = unet(*inputs)
+
+# 추적
+print("tracing..")
+unet_traced = torch.jit.trace(unet, inputs)
+unet_traced.eval()
+print("done tracing")
+
+
+# 워밍업 및 그래프 최적화
+for _ in range(5):
+    with torch.inference_mode():
+        inputs = generate_inputs()
+        orig_output = unet_traced(*inputs)
+
+
+# 벤치마킹
+with torch.inference_mode():
+    for _ in range(n_experiments):
+        torch.cuda.synchronize()
+        start_time = time.time()
+        for _ in range(unet_runs_per_experiment):
+            orig_output = unet_traced(*inputs)
+        torch.cuda.synchronize()
+        print(f"unet traced inference took {time.time() - start_time:.2f} seconds")
+    for _ in range(n_experiments):
+        torch.cuda.synchronize()
+        start_time = time.time()
+        for _ in range(unet_runs_per_experiment):
+            orig_output = unet(*inputs)
+        torch.cuda.synchronize()
+        print(f"unet inference took {time.time() - start_time:.2f} seconds")
+
+# 모델 저장
+unet_traced.save("unet_traced.pt")
+```
+
+그 다음, 파이프라인의 `unet` 특성을 다음과 같이 추적된 모델로 바꿀 수 있습니다.
+
+```python
+from diffusers import StableDiffusionPipeline
+import torch
+from dataclasses import dataclass
+
+
+@dataclass
+class UNet2DConditionOutput:
+    sample: torch.FloatTensor
+
+
+pipe = StableDiffusionPipeline.from_pretrained(
+    "runwayml/stable-diffusion-v1-5",
+    torch_dtype=torch.float16,
+).to("cuda")
+
+# jitted unet 사용
+unet_traced = torch.jit.load("unet_traced.pt")
+
+
+# pipe.unet 삭제
+class TracedUNet(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.in_channels = pipe.unet.in_channels
+        self.device = pipe.unet.device
+
+    def forward(self, latent_model_input, t, encoder_hidden_states):
+        sample = unet_traced(latent_model_input, t, encoder_hidden_states)[0]
+        return UNet2DConditionOutput(sample=sample)
+
+
+pipe.unet = TracedUNet()
+
+with torch.inference_mode():
+    image = pipe([prompt] * 1, num_inference_steps=50).images[0]
+```
+
+
+## Memory-efficient attention
+
+어텐션 블록의 대역폭을 최적화하는 최근 작업으로 GPU 메모리 사용량이 크게 향상되고 향상되었습니다.
+@tridao의 가장 최근의 플래시 어텐션: [code](https://github.com/HazyResearch/flash-attention), [paper](https://arxiv.org/pdf/2205.14135.pdf).
+
+배치 크기 1(프롬프트 1개)의 512x512 크기로 추론을 실행할 때 몇 가지 Nvidia GPU에서 얻은 속도 향상은 다음과 같습니다:
+
+| GPU              	| 기준 어텐션 FP16 	       | 메모리 효율적인 어텐션 FP16 	|
+|------------------	|---------------------	|---------------------------------	|
+| NVIDIA Tesla T4  	| 3.5it/s             	| 5.5it/s                         	|
+| NVIDIA 3060 RTX  	| 4.6it/s             	| 7.8it/s                         	|
+| NVIDIA A10G      	| 8.88it/s            	| 15.6it/s                        	|
+| NVIDIA RTX A6000 	| 11.7it/s            	| 21.09it/s                       	|
+| NVIDIA TITAN RTX  | 12.51it/s         	| 18.22it/s                       	|
+| A100-SXM4-40GB    	| 18.6it/s            	| 29.it/s                        	|
+| A100-SXM-80GB    	| 18.7it/s            	| 29.5it/s                        	|
+
+이를 활용하려면 다음을 만족해야 합니다: 
+ - PyTorch > 1.12
+ - Cuda 사용 가능
+ - [xformers 라이브러리를 설치함](xformers)
+```python
+from diffusers import StableDiffusionPipeline
+import torch
+
+pipe = StableDiffusionPipeline.from_pretrained(
+    "runwayml/stable-diffusion-v1-5",
+    torch_dtype=torch.float16,
+).to("cuda")
+
+pipe.enable_xformers_memory_efficient_attention()
+
+with torch.inference_mode():
+    sample = pipe("a small cat")
+
+# 선택: 이를 비활성화 하기 위해 다음을 사용할 수 있습니다.
+# pipe.disable_xformers_memory_efficient_attention()
+```
