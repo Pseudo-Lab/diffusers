@@ -285,45 +285,4 @@ unet = pipe.unet
 unet.eval()
 unet.to(memory_format=torch.channels_last)  # Channels Last 메모리 형식 사용
 unet.forward = functools.partial(unet.forward, return_dict=False)  # return_dict=False을 기본값으로 설정
-
-# 워밍업
-for _ in range(3):
-    with torch.inference_mode():
-        inputs = generate_inputs()
-        orig_output = unet(*inputs)
-
-# 추적
-print("tracing..")
-unet_traced = torch.jit.trace(unet, inputs)
-unet_traced.eval()
-print("done tracing")
-
-
-# 워밍업 및 그래프 최적화
-for _ in range(5):
-    with torch.inference_mode():
-        inputs = generate_inputs()
-        orig_output = unet_traced(*inputs)
-
-
-# 벤치마킹
-with torch.inference_mode():
-    for _ in range(n_experiments):
-        torch.cuda.synchronize()
-        start_time = time.time()
-        for _ in range(unet_runs_per_experiment):
-            orig_output = unet_traced(*inputs)
-        torch.cuda.synchronize()
-        print(f"unet traced inference took {time.time() - start_time:.2f} seconds")
-    for _ in range(n_experiments):
-        torch.cuda.synchronize()
-        start_time = time.time()
-        for _ in range(unet_runs_per_experiment):
-            orig_output = unet(*inputs)
-        torch.cuda.synchronize()
-        print(f"unet inference took {time.time() - start_time:.2f} seconds")
-
-# 모델 저장
-unet_traced.save("unet_traced.pt")
 ```
-
