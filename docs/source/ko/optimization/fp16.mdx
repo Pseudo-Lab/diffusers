@@ -77,3 +77,159 @@ image = pipe(prompt).images[0]
 <Tip warning={true}>
   어떤 파이프라인에서도 [`torch.autocast`](https://pytorch.org/docs/stable/amp.html#torch.autocast) 를 사용하는 것은 검은색 이미지를 생성할 수 있고, 순수한 float16 정밀도를 사용하는 것보다 항상 느리기 때문에 사용하지 않는 것이 좋습니다. 
 </Tip>
+
+## 추가 메모리 절약을 위한 슬라이스 어텐션
+
+추가 메모리 절약을 위해, 한 번에 모두 계산하는 대신 단계적으로 계산을 수행하는 슬라이스 버전의 어텐션(attention)을 사용할 수 있습니다.
+
+<Tip>
+  Attention slicing은 모델이 하나 이상의 어텐션 헤드를 사용하는 한, 배치 크기가 1인 경우에도 유용합니다.
+  하나 이상의 어텐션 헤드가 있는 경우 *QK^T* 어텐션 매트릭스는 상당한 양의 메모리를 절약할 수 있는 각 헤드에 대해 순차적으로 계산될 수 있습니다.
+</Tip>
+
+각 헤드에 대해 순차적으로 어텐션 계산을 수행하려면, 다음과 같이 추론 전에 파이프라인에서 [`~StableDiffusionPipeline.enable_attention_slicing`]를 호출하면 됩니다:
+
+```Python
+import torch
+from diffusers import StableDiffusionPipeline
+
+pipe = StableDiffusionPipeline.from_pretrained(
+    "runwayml/stable-diffusion-v1-5",
+    
+    torch_dtype=torch.float16,
+)
+pipe = pipe.to("cuda")
+
+prompt = "a photo of an astronaut riding a horse on mars"
+pipe.enable_attention_slicing()
+image = pipe(prompt).images[0]
+```
+
+추론 시간이 약 10% 느려지는 약간의 성능 저하가 있지만 이 방법을 사용하면 3.2GB 정도의 작은 VRAM으로도 Stable Diffusion을 사용할 수 있습니다!
+
+
+## 더 큰 배치를 위한 sliced VAE 디코드
+
+제한된 VRAM에서 대규모 이미지 배치를 디코딩하거나 32개 이상의 이미지가 포함된 배치를 활성화하기 위해, 배치의 latent 이미지를 한 번에 하나씩 디코딩하는 슬라이스 VAE 디코드를 사용할 수 있습니다.
+
+이를 [`~StableDiffusionPipeline.enable_attention_slicing`] 또는 [`~StableDiffusionPipeline.enable_xformers_memory_efficient_attention`]과 결합하여 메모리 사용을 추가로 최소화할 수 있습니다.
+
+VAE 디코드를 한 번에 하나씩 수행하려면 추론 전에 파이프라인에서 [`~StableDiffusionPipeline.enable_vae_slicing`]을 호출합니다. 예를 들어:
+
+```Python
+import torch
+from diffusers import StableDiffusionPipeline
+
+pipe = StableDiffusionPipeline.from_pretrained(
+    "runwayml/stable-diffusion-v1-5",
+    
+    torch_dtype=torch.float16,
+)
+pipe = pipe.to("cuda")
+
+prompt = "a photo of an astronaut riding a horse on mars"
+pipe.enable_vae_slicing()
+images = pipe([prompt] * 32).images
+```
+
+다중 이미지 배치에서 VAE 디코드가 약간의 성능 향상이 이루어집니다. 단일 이미지 배치에서는 성능 영향은 없습니다.
+
+
+## 메모리 절약을 위해 가속 기능을 사용하여 CPU로 오프로딩
+
+추가 메모리 절약을 위해 가중치를 CPU로 오프로드하고 순방향 전달을 수행할 때만 GPU로 로드할 수 있습니다.
+
+CPU 오프로딩을 수행하려면 [`~StableDiffusionPipeline.enable_sequential_cpu_offload`]를 호출하기만 하면 됩니다:
+
+```Python
+import torch
+from diffusers import StableDiffusionPipeline
+
+pipe = StableDiffusionPipeline.from_pretrained(
+    "runwayml/stable-diffusion-v1-5",
+    
+    torch_dtype=torch.float16,
+)
+
+prompt = "a photo of an astronaut riding a horse on mars"
+pipe.enable_sequential_cpu_offload()
+image = pipe(prompt).images[0]
+```
+
+그러면 메모리 소비를 3GB 미만으로 줄일 수 있습니다.
+
+Note that this method works at the submodule level, not on whole models. This is the best way to minimize memory consumption, but inference is much slower due to the iterative nature of the process. The UNet component of the pipeline runs several times (as many as `num_inference_steps`); each time, the different submodules of the UNet are sequentially onloaded and then offloaded as they are needed, so the number of memory transfers is large.
+
+<Tip>
+Consider using <a href="#model_offloading">model offloading</a> as another point in the optimization space: it will be much faster, but memory savings won't be as large.
+</Tip>
+
+It is also possible to chain offloading with attention slicing for minimal memory consumption (< 2GB).
+
+
+```Python
+import torch
+from diffusers import StableDiffusionPipeline
+
+pipe = StableDiffusionPipeline.from_pretrained(
+    "runwayml/stable-diffusion-v1-5",
+    
+    torch_dtype=torch.float16,
+)
+
+prompt = "a photo of an astronaut riding a horse on mars"
+pipe.enable_sequential_cpu_offload()
+pipe.enable_attention_slicing(1)
+
+image = pipe(prompt).images[0]
+```
+
+**참고**: 'enable_sequential_cpu_offload()'를 사용할 때, 미리 파이프라인을 CUDA로 이동하지 **않는** 것이 중요합니다.그렇지 않으면 메모리 소비의 이득이 최소화됩니다. 더 많은 정보를 위해 [이 이슈](https://github.com/huggingface/diffusers/issues/1934)를 보세요.
+
+<a name="model_offloading"></a>
+## Model offloading for fast inference and memory savings
+
+[Sequential CPU offloading](#sequential_offloading), as discussed in the previous section, preserves a lot of memory but makes inference slower, because submodules are moved to GPU as needed, and immediately returned to CPU when a new module runs.
+
+Full-model offloading is an alternative that moves whole models to the GPU, instead of handling each model's constituent _modules_. This results in a negligible impact on inference time (compared with moving the pipeline to `cuda`), while still providing some memory savings.
+
+In this scenario, only one of the main components of the pipeline (typically: text encoder, unet and vae)
+will be in the GPU while the others wait in the CPU. Components like the UNet that run for multiple iterations will stay on GPU until they are no longer needed.
+
+This feature can be enabled by invoking `enable_model_cpu_offload()` on the pipeline, as shown below.
+
+```Python
+import torch
+from diffusers import StableDiffusionPipeline
+
+pipe = StableDiffusionPipeline.from_pretrained(
+    "runwayml/stable-diffusion-v1-5",  
+    torch_dtype=torch.float16,
+)
+
+prompt = "a photo of an astronaut riding a horse on mars"
+pipe.enable_model_cpu_offload()
+image = pipe(prompt).images[0]
+```
+
+This is also compatible with attention slicing for additional memory savings.
+
+```Python
+import torch
+from diffusers import StableDiffusionPipeline
+
+pipe = StableDiffusionPipeline.from_pretrained(
+    "runwayml/stable-diffusion-v1-5",
+    torch_dtype=torch.float16,
+)
+
+prompt = "a photo of an astronaut riding a horse on mars"
+pipe.enable_model_cpu_offload()
+pipe.enable_attention_slicing(1)
+
+image = pipe(prompt).images[0]
+```
+
+<Tip>
+This feature requires `accelerate` version 0.17.0 or larger.
+</Tip>
