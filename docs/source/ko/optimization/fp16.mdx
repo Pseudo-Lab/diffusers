@@ -233,3 +233,20 @@ image = pipe(prompt).images[0]
 <Tip>
 This feature requires `accelerate` version 0.17.0 or larger.
 </Tip>
+
+## Channels Last 메모리 형식 사용하기
+
+Channels Last 메모리 형식은 차원 순서를 보존하는 메모리에서 NCHW 텐서 배열을 대체하는 방법입니다.
+Channels Last 텐서는 채널이 가장 조밀한 차원이 되는 방식으로 정렬됩니다(일명 픽셀당 이미지를 저장).
+현재 모든 연산자 Channels Last 형식을 지원하는 것은 아니라 성능이 저하될 수 있으므로, 사용해보고 모델에 잘 작동하는지 확인하는 것이 좋습니다.
+
+
+예를 들어 파이프라인의 UNet 모델이 channels Last 형식을 사용하도록 설정하려면 다음을 사용할 수 있습니다:
+
+```python
+print(pipe.unet.conv_out.state_dict()["weight"].stride())  # (2880, 9, 3, 1)
+pipe.unet.to(memory_format=torch.channels_last)  # in-place 연산
+# 2번째 차원에서 스트라이드 1을 가지는 (2880, 1, 960, 320)로, 연산이 작동함을 증명합니다.
+print(pipe.unet.conv_out.state_dict()["weight"].stride())
+```
+
