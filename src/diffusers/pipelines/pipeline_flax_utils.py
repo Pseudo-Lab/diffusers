@@ -1,5 +1,5 @@
 # coding=utf-8
-# Copyright 2023 The HuggingFace Inc. team.
+# Copyright 2022 The HuggingFace Inc. team.
 # Copyright (c) 2022, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,8 +19,9 @@ import inspect
 import os
 from typing import Any, Dict, List, Optional, Union
 
-import flax
 import numpy as np
+
+import flax
 import PIL
 from flax.core.frozen_dict import FrozenDict
 from huggingface_hub import snapshot_download

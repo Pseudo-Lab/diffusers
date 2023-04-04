@@ -1,9 +1,8 @@
 from typing import Any, Callable, Dict, List, Optional, Union
 
-import PIL.Image
 import torch
-from transformers import CLIPFeatureExtractor, CLIPTextModel, CLIPTokenizer
 
+import PIL.Image
 from diffusers import (
     AutoencoderKL,
     DDIMScheduler,
@@ -18,6 +17,7 @@ from diffusers import (
 from diffusers.configuration_utils import FrozenDict
 from diffusers.pipelines.stable_diffusion.safety_checker import StableDiffusionSafetyChecker
 from diffusers.utils import deprecate, logging
+from transformers import CLIPFeatureExtractor, CLIPTextModel, CLIPTokenizer
 
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
@@ -136,7 +136,7 @@ class StableDiffusionMegaPipeline(DiffusionPipeline):
         output_type: Optional[str] = "pil",
         return_dict: bool = True,
         callback: Optional[Callable[[int, int, torch.FloatTensor], None]] = None,
-        callback_steps: int = 1,
+        callback_steps: Optional[int] = 1,
     ):
         # For more information on how this function works, please see: https://huggingface.co/docs/diffusers/api/pipelines/stable_diffusion#diffusers.StableDiffusionImg2ImgPipeline
         return StableDiffusionInpaintPipelineLegacy(**self.components)(
@@ -170,7 +170,7 @@ class StableDiffusionMegaPipeline(DiffusionPipeline):
         output_type: Optional[str] = "pil",
         return_dict: bool = True,
         callback: Optional[Callable[[int, int, torch.FloatTensor], None]] = None,
-        callback_steps: int = 1,
+        callback_steps: Optional[int] = 1,
         **kwargs,
     ):
         # For more information on how this function works, please see: https://huggingface.co/docs/diffusers/api/pipelines/stable_diffusion#diffusers.StableDiffusionImg2ImgPipeline
@@ -206,7 +206,7 @@ class StableDiffusionMegaPipeline(DiffusionPipeline):
         output_type: Optional[str] = "pil",
         return_dict: bool = True,
         callback: Optional[Callable[[int, int, torch.FloatTensor], None]] = None,
-        callback_steps: int = 1,
+        callback_steps: Optional[int] = 1,
     ):
         # For more information on how this function https://huggingface.co/docs/diffusers/api/pipelines/stable_diffusion#diffusers.StableDiffusionPipeline
         return StableDiffusionPipeline(**self.components)(

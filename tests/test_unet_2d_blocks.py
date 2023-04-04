@@ -1,5 +1,5 @@
 # coding=utf-8
-# Copyright 2023 HuggingFace Inc.
+# Copyright 2022 HuggingFace Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -255,7 +255,10 @@ class SimpleCrossAttnUpBlock2DTests(UNetBlockTesterMixin, unittest.TestCase):
         return init_dict, inputs_dict
 
     def test_output(self):
-        expected_slice = [0.2645, 0.1480, 0.0909, 0.8044, -0.9758, -0.9083, 0.0994, -1.1453, -0.7402]
+        if torch_device == "mps":
+            expected_slice = [0.4327, 0.5538, 0.3919, 0.5682, 0.2704, 0.1573, -0.8768, -0.4615, -0.4146]
+        else:
+            expected_slice = [0.2645, 0.1480, 0.0909, 0.8044, -0.9758, -0.9083, 0.0994, -1.1453, -0.7402]
         super().test_output(expected_slice)
 
 
@@ -333,5 +336,8 @@ class AttnUpDecoderBlock2DTests(UNetBlockTesterMixin, unittest.TestCase):
         return init_dict, inputs_dict
 
     def test_output(self):
-        expected_slice = [0.6738, 0.4491, 0.1055, 1.0710, 0.7316, 0.3339, 0.3352, 0.1023, 0.3568]
+        if torch_device == "mps":
+            expected_slice = [-0.3669, -0.3387, 0.1029, -0.6564, 0.2728, -0.3233, 0.5977, -0.1784, 0.5482]
+        else:
+            expected_slice = [0.6738, 0.4491, 0.1055, 1.0710, 0.7316, 0.3339, 0.3352, 0.1023, 0.3568]
         super().test_output(expected_slice)

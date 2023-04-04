@@ -1,4 +1,4 @@
-# Copyright 2023 The HuggingFace Team. All rights reserved.
+# Copyright 2022 The HuggingFace Team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -53,7 +53,7 @@ class EnvironmentCommand(BaseDiffusersCLICommand):
         if is_accelerate_available():
             import accelerate
 
-            accelerate_version = accelerate.__version__
+            transformers_version = accelerate.__version__
 
         xformers_version = "not installed"
         if is_xformers_available():

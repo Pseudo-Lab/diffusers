@@ -6,22 +6,15 @@ import random
 from pathlib import Path
 from typing import Optional
 
-import jax
-import jax.numpy as jnp
 import numpy as np
-import optax
 import torch
 import torch.utils.checkpoint
+
+import jax
+import jax.numpy as jnp
+import optax
 import transformers
 from datasets import load_dataset
-from flax import jax_utils
-from flax.training import train_state
-from flax.training.common_utils import shard
-from huggingface_hub import HfFolder, Repository, create_repo, whoami
-from torchvision import transforms
-from tqdm.auto import tqdm
-from transformers import CLIPFeatureExtractor, CLIPTokenizer, FlaxCLIPTextModel, set_seed
-
 from diffusers import (
     FlaxAutoencoderKL,
     FlaxDDPMScheduler,
@@ -31,10 +24,17 @@ from diffusers import (
 )
 from diffusers.pipelines.stable_diffusion import FlaxStableDiffusionSafetyChecker
 from diffusers.utils import check_min_version
+from flax import jax_utils
+from flax.training import train_state
+from flax.training.common_utils import shard
+from huggingface_hub import HfFolder, Repository, whoami
+from torchvision import transforms
+from tqdm.auto import tqdm
+from transformers import CLIPFeatureExtractor, CLIPTokenizer, FlaxCLIPTextModel, set_seed
 
 
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
-check_min_version("0.15.0.dev0")
+check_min_version("0.10.0.dev0")
 
 logger = logging.getLogger(__name__)
 
@@ -47,13 +47,6 @@ def parse_args():
         default=None,
         required=True,
         help="Path to pretrained model or model identifier from huggingface.co/models.",
-    )
-    parser.add_argument(
-        "--revision",
-        type=str,
-        default=None,
-        required=False,
-        help="Revision of pretrained model identifier from huggingface.co/models.",
     )
     parser.add_argument(
         "--dataset_name",
@@ -123,12 +116,8 @@ def parse_args():
     )
     parser.add_argument(
         "--center_crop",
-        default=False,
         action="store_true",
-        help=(
-            "Whether to center crop the input images to the resolution. If not set, the images will be randomly"
-            " cropped. The images will be resized to the resolution first before cropping."
-        ),
+        help="Whether to center crop images before resizing to resolution (if not set, random crop will be used)",
     )
     parser.add_argument(
         "--random_flip",
@@ -266,8 +255,7 @@ def main():
                 repo_name = get_full_repo_name(Path(args.output_dir).name, token=args.hub_token)
             else:
                 repo_name = args.hub_model_id
-            create_repo(repo_name, exist_ok=True, token=args.hub_token)
-            repo = Repository(args.output_dir, clone_from=repo_name, token=args.hub_token)
+            repo = Repository(args.output_dir, clone_from=repo_name)
 
             with open(os.path.join(args.output_dir, ".gitignore"), "w+") as gitignore:
                 if "step_*" not in gitignore:
@@ -393,17 +381,15 @@ def main():
         weight_dtype = jnp.bfloat16
 
     # Load models and create wrapper for stable diffusion
-    tokenizer = CLIPTokenizer.from_pretrained(
-        args.pretrained_model_name_or_path, revision=args.revision, subfolder="tokenizer"
-    )
+    tokenizer = CLIPTokenizer.from_pretrained(args.pretrained_model_name_or_path, subfolder="tokenizer")
     text_encoder = FlaxCLIPTextModel.from_pretrained(
-        args.pretrained_model_name_or_path, revision=args.revision, subfolder="text_encoder", dtype=weight_dtype
+        args.pretrained_model_name_or_path, subfolder="text_encoder", dtype=weight_dtype
     )
     vae, vae_params = FlaxAutoencoderKL.from_pretrained(
-        args.pretrained_model_name_or_path, revision=args.revision, subfolder="vae", dtype=weight_dtype
+        args.pretrained_model_name_or_path, subfolder="vae", dtype=weight_dtype
     )
     unet, unet_params = FlaxUNet2DConditionModel.from_pretrained(
-        args.pretrained_model_name_or_path, revision=args.revision, subfolder="unet", dtype=weight_dtype
+        args.pretrained_model_name_or_path, subfolder="unet", dtype=weight_dtype
     )
 
     # Optimization
@@ -447,7 +433,7 @@ def main():
             latents = vae_outputs.latent_dist.sample(sample_rng)
             # (NHWC) -> (NCHW)
             latents = jnp.transpose(latents, (0, 3, 1, 2))
-            latents = latents * vae.config.scaling_factor
+            latents = latents * 0.18215
 
             # Sample noise that we'll add to the latents
             noise_rng, timestep_rng = jax.random.split(sample_rng)

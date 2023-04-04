@@ -4,8 +4,6 @@ from typing import List, Optional, Union
 import torch
 from torch import nn
 from torch.nn import functional as F
-from torchvision import transforms
-from transformers import CLIPFeatureExtractor, CLIPModel, CLIPTextModel, CLIPTokenizer
 
 from diffusers import (
     AutoencoderKL,
@@ -16,6 +14,8 @@ from diffusers import (
     UNet2DConditionModel,
 )
 from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion import StableDiffusionPipelineOutput
+from torchvision import transforms
+from transformers import CLIPFeatureExtractor, CLIPModel, CLIPTextModel, CLIPTokenizer
 
 
 class MakeCutouts(nn.Module):
@@ -150,7 +150,7 @@ class CLIPGuidedStableDiffusion(DiffusionPipeline):
         else:
             raise ValueError(f"scheduler type {type(self.scheduler)} not supported")
 
-        sample = 1 / self.vae.config.scaling_factor * sample
+        sample = 1 / 0.18215 * sample
         image = self.vae.decode(sample).sample
         image = (image / 2 + 0.5).clamp(0, 1)
 
@@ -336,7 +336,7 @@ class CLIPGuidedStableDiffusion(DiffusionPipeline):
             latents = self.scheduler.step(noise_pred, t, latents, **extra_step_kwargs).prev_sample
 
         # scale and decode the image latents with vae
-        latents = 1 / self.vae.config.scaling_factor * latents
+        latents = 1 / 0.18215 * latents
         image = self.vae.decode(latents).sample
 
         image = (image / 2 + 0.5).clamp(0, 1)

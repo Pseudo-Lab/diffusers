@@ -1,5 +1,5 @@
 # coding=utf-8
-# Copyright 2023 HuggingFace Inc.
+# Copyright 2022 HuggingFace Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -19,14 +19,13 @@ import unittest
 
 import numpy as np
 import torch
-from PIL import Image
-from transformers import CLIPTextConfig, CLIPTextModel, CLIPTokenizer
 
 from diffusers import AutoencoderKL, PNDMScheduler, StableDiffusionInpaintPipeline, UNet2DConditionModel
 from diffusers.utils import floats_tensor, load_image, load_numpy, torch_device
 from diffusers.utils.testing_utils import require_torch_gpu, slow
+from PIL import Image
+from transformers import CLIPTextConfig, CLIPTextModel, CLIPTokenizer
 
-from ...pipeline_params import TEXT_GUIDED_IMAGE_INPAINTING_BATCH_PARAMS, TEXT_GUIDED_IMAGE_INPAINTING_PARAMS
 from ...test_pipelines_common import PipelineTesterMixin
 
 
@@ -35,8 +34,6 @@ torch.backends.cuda.matmul.allow_tf32 = False
 
 class StableDiffusion2InpaintPipelineFastTests(PipelineTesterMixin, unittest.TestCase):
     pipeline_class = StableDiffusionInpaintPipeline
-    params = TEXT_GUIDED_IMAGE_INPAINTING_PARAMS
-    batch_params = TEXT_GUIDED_IMAGE_INPAINTING_BATCH_PARAMS
 
     def get_dummy_components(self):
         torch.manual_seed(0)
@@ -50,7 +47,7 @@ class StableDiffusion2InpaintPipelineFastTests(PipelineTesterMixin, unittest.Tes
             up_block_types=("CrossAttnUpBlock2D", "UpBlock2D"),
             cross_attention_dim=32,
             # SD2-specific config below
-            attention_head_dim=(2, 4),
+            attention_head_dim=(2, 4, 8, 8),
             use_linear_projection=True,
         )
         scheduler = PNDMScheduler(skip_prk_steps=True)
@@ -161,7 +158,7 @@ class StableDiffusionInpaintPipelineIntegrationTests(unittest.TestCase):
 
         prompt = "Face of a yellow cat, high resolution, sitting on a park bench"
 
-        generator = torch.manual_seed(0)
+        generator = torch.Generator(device=torch_device).manual_seed(0)
         output = pipe(
             prompt=prompt,
             image=init_image,
@@ -199,7 +196,7 @@ class StableDiffusionInpaintPipelineIntegrationTests(unittest.TestCase):
 
         prompt = "Face of a yellow cat, high resolution, sitting on a park bench"
 
-        generator = torch.manual_seed(0)
+        generator = torch.Generator(device=torch_device).manual_seed(0)
         output = pipe(
             prompt=prompt,
             image=init_image,
@@ -240,7 +237,7 @@ class StableDiffusionInpaintPipelineIntegrationTests(unittest.TestCase):
 
         prompt = "Face of a yellow cat, high resolution, sitting on a park bench"
 
-        generator = torch.manual_seed(0)
+        generator = torch.Generator(device=torch_device).manual_seed(0)
         _ = pipe(
             prompt=prompt,
             image=init_image,

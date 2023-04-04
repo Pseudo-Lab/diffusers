@@ -1,15 +1,8 @@
 from typing import Callable, List, Optional, Union
 
-import PIL
 import torch
-from transformers import (
-    CLIPFeatureExtractor,
-    CLIPSegForImageSegmentation,
-    CLIPSegProcessor,
-    CLIPTextModel,
-    CLIPTokenizer,
-)
 
+import PIL
 from diffusers import DiffusionPipeline
 from diffusers.configuration_utils import FrozenDict
 from diffusers.models import AutoencoderKL, UNet2DConditionModel
@@ -17,6 +10,13 @@ from diffusers.pipelines.stable_diffusion import StableDiffusionInpaintPipeline
 from diffusers.pipelines.stable_diffusion.safety_checker import StableDiffusionSafetyChecker
 from diffusers.schedulers import DDIMScheduler, LMSDiscreteScheduler, PNDMScheduler
 from diffusers.utils import deprecate, is_accelerate_available, logging
+from transformers import (
+    CLIPFeatureExtractor,
+    CLIPSegForImageSegmentation,
+    CLIPSegProcessor,
+    CLIPTextModel,
+    CLIPTokenizer,
+)
 
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
@@ -201,7 +201,7 @@ class TextInpainting(DiffusionPipeline):
         output_type: Optional[str] = "pil",
         return_dict: bool = True,
         callback: Optional[Callable[[int, int, torch.FloatTensor], None]] = None,
-        callback_steps: int = 1,
+        callback_steps: Optional[int] = 1,
         **kwargs,
     ):
         r"""

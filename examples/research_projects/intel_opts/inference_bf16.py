@@ -1,8 +1,8 @@
-import intel_extension_for_pytorch as ipex
 import torch
-from PIL import Image
 
+import intel_extension_for_pytorch as ipex
 from diffusers import StableDiffusionPipeline
+from PIL import Image
 
 
 def image_grid(imgs, rows, cols):

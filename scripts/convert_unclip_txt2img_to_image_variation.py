@@ -1,8 +1,7 @@
 import argparse
 
-from transformers import CLIPImageProcessor, CLIPVisionModelWithProjection
-
 from diffusers import UnCLIPImageVariationPipeline, UnCLIPPipeline
+from transformers import CLIPImageProcessor, CLIPVisionModelWithProjection
 
 
 if __name__ == "__main__":

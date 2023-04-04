@@ -6,24 +6,15 @@ import os
 from pathlib import Path
 from typing import Optional
 
-import jax
-import jax.numpy as jnp
 import numpy as np
-import optax
 import torch
 import torch.utils.checkpoint
-import transformers
-from flax import jax_utils
-from flax.training import train_state
-from flax.training.common_utils import shard
-from huggingface_hub import HfFolder, Repository, create_repo, whoami
-from jax.experimental.compilation_cache import compilation_cache as cc
-from PIL import Image
 from torch.utils.data import Dataset
-from torchvision import transforms
-from tqdm.auto import tqdm
-from transformers import CLIPFeatureExtractor, CLIPTokenizer, FlaxCLIPTextModel, set_seed
 
+import jax
+import jax.numpy as jnp
+import optax
+import transformers
 from diffusers import (
     FlaxAutoencoderKL,
     FlaxDDPMScheduler,
@@ -33,10 +24,19 @@ from diffusers import (
 )
 from diffusers.pipelines.stable_diffusion import FlaxStableDiffusionSafetyChecker
 from diffusers.utils import check_min_version
+from flax import jax_utils
+from flax.training import train_state
+from flax.training.common_utils import shard
+from huggingface_hub import HfFolder, Repository, whoami
+from jax.experimental.compilation_cache import compilation_cache as cc
+from PIL import Image
+from torchvision import transforms
+from tqdm.auto import tqdm
+from transformers import CLIPFeatureExtractor, CLIPTokenizer, FlaxCLIPTextModel, set_seed
 
 
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
-check_min_version("0.15.0.dev0")
+check_min_version("0.10.0.dev0")
 
 # Cache compiled models across invocations of this script.
 cc.initialize_cache(os.path.expanduser("~/.cache/jax/compilation_cache"))
@@ -132,13 +132,7 @@ def parse_args():
         ),
     )
     parser.add_argument(
-        "--center_crop",
-        default=False,
-        action="store_true",
-        help=(
-            "Whether to center crop the input images to the resolution. If not set, the images will be randomly"
-            " cropped. The images will be resized to the resolution first before cropping."
-        ),
+        "--center_crop", action="store_true", help="Whether to center crop images before resizing to resolution"
     )
     parser.add_argument("--train_text_encoder", action="store_true", help="Whether to train the text encoder")
     parser.add_argument(
@@ -231,7 +225,6 @@ class DreamBoothDataset(Dataset):
         tokenizer,
         class_data_root=None,
         class_prompt=None,
-        class_num=None,
         size=512,
         center_crop=False,
     ):
@@ -252,10 +245,7 @@ class DreamBoothDataset(Dataset):
             self.class_data_root = Path(class_data_root)
             self.class_data_root.mkdir(parents=True, exist_ok=True)
             self.class_images_path = list(self.class_data_root.iterdir())
-            if class_num is not None:
-                self.num_class_images = min(len(self.class_images_path), class_num)
-            else:
-                self.num_class_images = len(self.class_images_path)
+            self.num_class_images = len(self.class_images_path)
             self._length = max(self.num_class_images, self.num_instance_images)
             self.class_prompt = class_prompt
         else:
@@ -397,8 +387,7 @@ def main():
                 repo_name = get_full_repo_name(Path(args.output_dir).name, token=args.hub_token)
             else:
                 repo_name = args.hub_model_id
-            create_repo(repo_name, exist_ok=True, token=args.hub_token)
-            repo = Repository(args.output_dir, clone_from=repo_name, token=args.hub_token)
+            repo = Repository(args.output_dir, clone_from=repo_name)
 
             with open(os.path.join(args.output_dir, ".gitignore"), "w+") as gitignore:
                 if "step_*" not in gitignore:
@@ -423,7 +412,6 @@ def main():
         instance_prompt=args.instance_prompt,
         class_data_root=args.class_data_dir if args.with_prior_preservation else None,
         class_prompt=args.class_prompt,
-        class_num=args.num_class_images,
         tokenizer=tokenizer,
         size=args.resolution,
         center_crop=args.center_crop,
@@ -538,7 +526,7 @@ def main():
             latents = vae_outputs.latent_dist.sample(sample_rng)
             # (NHWC) -> (NCHW)
             latents = jnp.transpose(latents, (0, 3, 1, 2))
-            latents = latents * vae.config.scaling_factor
+            latents = latents * 0.18215
 
             # Sample noise that we'll add to the latents
             noise_rng, timestep_rng = jax.random.split(sample_rng)
