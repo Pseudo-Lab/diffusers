@@ -14,6 +14,7 @@
 # limitations under the License.
 
 import gc
+import glob
 import json
 import os
 import random
@@ -56,6 +57,7 @@ from diffusers import (
     UniPCMultistepScheduler,
     logging,
 )
+from diffusers.pipelines.pipeline_utils import variant_compatible_siblings
 from diffusers.schedulers.scheduling_utils import SCHEDULER_CONFIG_NAME
 from diffusers.utils import (
     CONFIG_NAME,
@@ -243,27 +245,6 @@ class DownloadTests(unittest.TestCase):
                     cache_dir=tmpdirname,
                     use_safetensors=True,
                 )
-
-    def test_returned_cached_folder(self):
-        prompt = "hello"
-        pipe = StableDiffusionPipeline.from_pretrained(
-            "hf-internal-testing/tiny-stable-diffusion-torch", safety_checker=None
-        )
-        _, local_path = StableDiffusionPipeline.from_pretrained(
-            "hf-internal-testing/tiny-stable-diffusion-torch", safety_checker=None, return_cached_folder=True
-        )
-        pipe_2 = StableDiffusionPipeline.from_pretrained(local_path)
-
-        pipe = pipe.to(torch_device)
-        pipe_2 = pipe_2.to(torch_device)
-
-        generator = torch.manual_seed(0)
-        out = pipe(prompt, num_inference_steps=2, generator=generator, output_type="numpy").images
-
-        generator = torch.manual_seed(0)
-        out_2 = pipe_2(prompt, num_inference_steps=2, generator=generator, output_type="numpy").images
-
-        assert np.max(np.abs(out - out_2)) < 1e-3
 
     def test_download_safetensors(self):
         with tempfile.TemporaryDirectory() as tmpdirname:
@@ -1381,6 +1362,29 @@ class PipelineFastTests(unittest.TestCase):
             assert sd.config.requires_safety_checker == [True, True]
             assert sd.config.safety_checker != (None, None)
             assert sd.config.feature_extractor != (None, None)
+
+    def test_warning_no_variant_available(self):
+        variant = "fp16"
+        with self.assertWarns(FutureWarning) as warning_context:
+            cached_folder = StableDiffusionPipeline.download(
+                "hf-internal-testing/diffusers-stable-diffusion-tiny-all", variant=variant
+            )
+
+        assert "but no such modeling files are available" in str(warning_context.warning)
+        assert variant in str(warning_context.warning)
+
+        def get_all_filenames(directory):
+            filenames = glob.glob(directory + "/**", recursive=True)
+            filenames = [f for f in filenames if os.path.isfile(f)]
+            return filenames
+
+        filenames = get_all_filenames(str(cached_folder))
+
+        all_model_files, variant_model_files = variant_compatible_siblings(filenames, variant=variant)
+
+        # make sure that none of the model names are variant model names
+        assert len(variant_model_files) == 0
+        assert len(all_model_files) > 0
 
 
 @slow
