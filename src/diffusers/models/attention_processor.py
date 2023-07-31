@@ -78,6 +78,7 @@ class Attention(nn.Module):
         self.upcast_softmax = upcast_softmax
         self.rescale_output_factor = rescale_output_factor
         self.residual_connection = residual_connection
+        self.dropout = dropout
 
         # we make use of this private variable to know whether this class is loaded
         # with an deprecated state dict so that we can convert it on the fly
@@ -1117,7 +1118,9 @@ class AttnProcessor2_0:
         value = attn.to_v(encoder_hidden_states)
 
         head_dim = inner_dim // attn.heads
+
         query = query.view(batch_size, -1, attn.heads, head_dim).transpose(1, 2)
+
         key = key.view(batch_size, -1, attn.heads, head_dim).transpose(1, 2)
         value = value.view(batch_size, -1, attn.heads, head_dim).transpose(1, 2)
 

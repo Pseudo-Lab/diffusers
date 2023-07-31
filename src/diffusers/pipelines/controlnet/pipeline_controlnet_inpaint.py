@@ -15,7 +15,6 @@
 # This model implementation is heavily inspired by https://github.com/haofanwang/ControlNet-for-Diffusers/
 
 import inspect
-import os
 import warnings
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
@@ -647,6 +646,8 @@ class StableDiffusionControlNetInpaintPipeline(DiffusionPipeline, TextualInversi
         prompt_embeds=None,
         negative_prompt_embeds=None,
         controlnet_conditioning_scale=1.0,
+        control_guidance_start=0.0,
+        control_guidance_end=1.0,
     ):
         if height % 8 != 0 or width % 8 != 0:
             raise ValueError(f"`height` and `width` have to be divisible by 8 but are {height} and {width}.")
@@ -718,7 +719,7 @@ class StableDiffusionControlNetInpaintPipeline(DiffusionPipeline, TextualInversi
                 raise ValueError("A single batch of multiple conditionings are supported at the moment.")
             elif len(image) != len(self.controlnet.nets):
                 raise ValueError(
-                    "For multiple controlnets: `image` must have the same length as the number of controlnets."
+                    f"For multiple controlnets: `image` must have the same length as the number of controlnets, but got {len(image)} images and {len(self.controlnet.nets)} ControlNets."
                 )
 
             for image_ in image:
@@ -752,6 +753,27 @@ class StableDiffusionControlNetInpaintPipeline(DiffusionPipeline, TextualInversi
         else:
             assert False
 
+        if len(control_guidance_start) != len(control_guidance_end):
+            raise ValueError(
+                f"`control_guidance_start` has {len(control_guidance_start)} elements, but `control_guidance_end` has {len(control_guidance_end)} elements. Make sure to provide the same number of elements to each list."
+            )
+
+        if isinstance(self.controlnet, MultiControlNetModel):
+            if len(control_guidance_start) != len(self.controlnet.nets):
+                raise ValueError(
+                    f"`control_guidance_start`: {control_guidance_start} has {len(control_guidance_start)} elements but there are {len(self.controlnet.nets)} controlnets available. Make sure to provide {len(self.controlnet.nets)}."
+                )
+
+        for start, end in zip(control_guidance_start, control_guidance_end):
+            if start >= end:
+                raise ValueError(
+                    f"control guidance start: {start} cannot be larger or equal to control guidance end: {end}."
+                )
+            if start < 0.0:
+                raise ValueError(f"control guidance start: {start} can't be smaller than 0.")
+            if end > 1.0:
+                raise ValueError(f"control guidance end: {end} can't be larger than 1.0.")
+
     # Copied from diffusers.pipelines.controlnet.pipeline_controlnet.StableDiffusionControlNetPipeline.check_image
     def check_image(self, image, prompt, prompt_embeds):
         image_is_pil = isinstance(image, PIL.Image.Image)
@@ -770,7 +792,7 @@ class StableDiffusionControlNetInpaintPipeline(DiffusionPipeline, TextualInversi
             and not image_is_np_list
         ):
             raise TypeError(
-                "image must be passed and be one of PIL image, numpy array, torch tensor, list of PIL images, list of numpy arrays or list of torch tensors"
+                f"image must be passed and be one of PIL image, numpy array, torch tensor, list of PIL images, list of numpy arrays or list of torch tensors, but is {type(image)}"
             )
 
         if image_is_pil:
@@ -957,18 +979,6 @@ class StableDiffusionControlNetInpaintPipeline(DiffusionPipeline, TextualInversi
 
         return image_latents
 
-    # override DiffusionPipeline
-    def save_pretrained(
-        self,
-        save_directory: Union[str, os.PathLike],
-        safe_serialization: bool = False,
-        variant: Optional[str] = None,
-    ):
-        if isinstance(self.controlnet, ControlNetModel):
-            super().save_pretrained(save_directory, safe_serialization, variant)
-        else:
-            raise NotImplementedError("Currently, the `save_pretrained()` is not implemented for Multi-ControlNet.")
-
     @torch.no_grad()
     @replace_example_docstring(EXAMPLE_DOC_STRING)
     def __call__(
@@ -1003,6 +1013,8 @@ class StableDiffusionControlNetInpaintPipeline(DiffusionPipeline, TextualInversi
         cross_attention_kwargs: Optional[Dict[str, Any]] = None,
         controlnet_conditioning_scale: Union[float, List[float]] = 0.5,
         guess_mode: bool = False,
+        control_guidance_start: Union[float, List[float]] = 0.0,
+        control_guidance_end: Union[float, List[float]] = 1.0,
     ):
         r"""
         Function invoked when calling the pipeline for generation.
@@ -1086,6 +1098,10 @@ class StableDiffusionControlNetInpaintPipeline(DiffusionPipeline, TextualInversi
             guess_mode (`bool`, *optional*, defaults to `False`):
                 In this mode, the ControlNet encoder will try best to recognize the content of the input image even if
                 you remove all prompts. The `guidance_scale` between 3.0 and 5.0 is recommended.
+            control_guidance_start (`float` or `List[float]`, *optional*, defaults to 0.0):
+                The percentage of total steps at which the controlnet starts applying.
+            control_guidance_end (`float` or `List[float]`, *optional*, defaults to 1.0):
+                The percentage of total steps at which the controlnet stops applying.
 
         Examples:
 
@@ -1096,8 +1112,21 @@ class StableDiffusionControlNetInpaintPipeline(DiffusionPipeline, TextualInversi
             list of `bool`s denoting whether the corresponding generated image likely represents "not-safe-for-work"
             (nsfw) content, according to the `safety_checker`.
         """
+        controlnet = self.controlnet._orig_mod if is_compiled_module(self.controlnet) else self.controlnet
+
         # 0. Default height and width to unet
         height, width = self._default_height_width(height, width, image)
+
+        # align format for control guidance
+        if not isinstance(control_guidance_start, list) and isinstance(control_guidance_end, list):
+            control_guidance_start = len(control_guidance_end) * [control_guidance_start]
+        elif not isinstance(control_guidance_end, list) and isinstance(control_guidance_start, list):
+            control_guidance_end = len(control_guidance_start) * [control_guidance_end]
+        elif not isinstance(control_guidance_start, list) and not isinstance(control_guidance_end, list):
+            mult = len(controlnet.nets) if isinstance(controlnet, MultiControlNetModel) else 1
+            control_guidance_start, control_guidance_end = mult * [control_guidance_start], mult * [
+                control_guidance_end
+            ]
 
         # 1. Check inputs. Raise error if not correct
         self.check_inputs(
@@ -1110,6 +1139,8 @@ class StableDiffusionControlNetInpaintPipeline(DiffusionPipeline, TextualInversi
             prompt_embeds,
             negative_prompt_embeds,
             controlnet_conditioning_scale,
+            control_guidance_start,
+            control_guidance_end,
         )
 
         # 2. Define call parameters
@@ -1125,8 +1156,6 @@ class StableDiffusionControlNetInpaintPipeline(DiffusionPipeline, TextualInversi
         # of the Imagen paper: https://arxiv.org/pdf/2205.11487.pdf . `guidance_scale = 1`
         # corresponds to doing no classifier free guidance.
         do_classifier_free_guidance = guidance_scale > 1.0
-
-        controlnet = self.controlnet._orig_mod if is_compiled_module(self.controlnet) else self.controlnet
 
         if isinstance(controlnet, MultiControlNetModel) and isinstance(controlnet_conditioning_scale, float):
             controlnet_conditioning_scale = [controlnet_conditioning_scale] * len(controlnet.nets)
@@ -1244,6 +1273,15 @@ class StableDiffusionControlNetInpaintPipeline(DiffusionPipeline, TextualInversi
         # 7. Prepare extra step kwargs. TODO: Logic should ideally just be moved out of the pipeline
         extra_step_kwargs = self.prepare_extra_step_kwargs(generator, eta)
 
+        # 7.1 Create tensor stating which controlnets to keep
+        controlnet_keep = []
+        for i in range(len(timesteps)):
+            keeps = [
+                1.0 - float(i / len(timesteps) < s or (i + 1) / len(timesteps) > e)
+                for s, e in zip(control_guidance_start, control_guidance_end)
+            ]
+            controlnet_keep.append(keeps[0] if len(keeps) == 1 else keeps)
+
         # 8. Denoising loop
         num_warmup_steps = len(timesteps) - num_inference_steps * self.scheduler.order
         with self.progress_bar(total=num_inference_steps) as progress_bar:
@@ -1262,12 +1300,17 @@ class StableDiffusionControlNetInpaintPipeline(DiffusionPipeline, TextualInversi
                     control_model_input = latent_model_input
                     controlnet_prompt_embeds = prompt_embeds
 
+                if isinstance(controlnet_keep[i], list):
+                    cond_scale = [c * s for c, s in zip(controlnet_conditioning_scale, controlnet_keep[i])]
+                else:
+                    cond_scale = controlnet_conditioning_scale * controlnet_keep[i]
+
                 down_block_res_samples, mid_block_res_sample = self.controlnet(
                     control_model_input,
                     t,
                     encoder_hidden_states=controlnet_prompt_embeds,
                     controlnet_cond=control_image,
-                    conditioning_scale=controlnet_conditioning_scale,
+                    conditioning_scale=cond_scale,
                     guess_mode=guess_mode,
                     return_dict=False,
                 )
@@ -1306,7 +1349,10 @@ class StableDiffusionControlNetInpaintPipeline(DiffusionPipeline, TextualInversi
                     init_mask = mask[:1]
 
                     if i < len(timesteps) - 1:
-                        init_latents_proper = self.scheduler.add_noise(init_latents_proper, noise, torch.tensor([t]))
+                        noise_timestep = timesteps[i + 1]
+                        init_latents_proper = self.scheduler.add_noise(
+                            init_latents_proper, noise, torch.tensor([noise_timestep])
+                        )
 
                     latents = (1 - init_mask) * init_latents_proper + init_mask * latents
 
